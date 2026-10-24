@@ -1,3 +1,4 @@
 node_modules/
 scancode-results.json
 *.log
+laufdaten/

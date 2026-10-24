@@ -1,24 +1,75 @@
 {
-  "_note": "Synthetic test data in the shape of an EP API v2 procedure object (JSON-LD), made up for the tests. Not a copy of an EP response; no personal data. Real responses are archived only in the raw archive outside this repository.",
+  "_note": "Synthetic test data in the shape of an EP API v2 procedure object (JSON-LD) as observed on 2026-10-24 (field names only; values made up). Not a copy of an EP response; no personal data.",
   "data": [
     {
       "id": "eli/dl/proc/2099-0001",
       "type": "Process",
       "label": "2099/0001(COD)",
       "process_type": "def/ep-procedure-types/COD",
-      "process_title": { "en": "Synthetic procedure for tests" },
-      "current_stage": "def/ep-procedure-stages/RDG1",
+      "process_title": {
+        "en": "Synthetic procedure for tests",
+        "de": "Synthetisches Verfahren für Tests"
+      },
+      "current_stage": "http://publications.europa.eu/resource/authority/procedure-phase/RDG1",
       "consists_of": [
-        { "id": "eli/dl/event/2099-0001-ANPRO-2099-01-10", "had_activity_type": "def/ep-activities/REFERRAL", "activity_date": "2099-01-10" },
-        { "id": "eli/dl/event/TEST-PR-000001-DEPOT-2099-02-01", "had_activity_type": "def/ep-activities/COMMITTEE_TABLING_REPORT", "activity_date": "2099-02-01", "based_on_a_realization_of": ["eli/dl/doc/TEST-PR-000001"] },
-        { "id": "eli/dl/event/MTG-PL-2099-03-01-VOT-ITM-000001", "had_activity_type": "def/ep-activities/PLENARY_VOTE_RESULTS", "activity_date": "2099-03-01", "based_on_a_realization_of": ["eli/dl/doc/A-10-2099-0001"] },
-        { "id": "eli/dl/event/2099-0001-TRILOGUE-2099-04-01", "had_activity_type": "def/ep-activities/INTERINSTITUTIONAL_NEGOTIATION", "activity_date": "2099-04-01" },
-        { "id": "eli/dl/event/2099-0001-TRILOGUE-2099-05-01", "had_activity_type": "def/ep-activities/INTERINSTITUTIONAL_NEGOTIATION", "activity_date": "2099-05-01" }
+        {
+          "id": "eli/dl/event/2099-0001-ANPRO-2099-01-10",
+          "had_activity_type": "def/ep-activities/REFERRAL",
+          "activity_date": "2099-01-10",
+          "type": "Activity",
+          "activity_id": "2099-0001-ANPRO-2099-01-10"
+        },
+        {
+          "id": "eli/dl/event/TEST-PR-000001-DEPOT-2099-02-01",
+          "had_activity_type": "def/ep-activities/COMMITTEE_TABLING_REPORT",
+          "activity_date": "2099-02-01",
+          "based_on_a_realization_of": [
+            "eli/dl/doc/TEST-PR-000001"
+          ],
+          "type": "Activity",
+          "activity_id": "TEST-PR-000001-DEPOT-2099-02-01"
+        },
+        {
+          "id": "eli/dl/event/MTG-PL-2099-03-01-VOT-ITM-000001",
+          "had_activity_type": "def/ep-activities/PLENARY_VOTE_RESULTS",
+          "activity_date": "2099-03-01",
+          "based_on_a_realization_of": [
+            "eli/dl/doc/A-10-2099-0001"
+          ],
+          "type": "Activity",
+          "activity_id": "MTG-PL-2099-03-01-VOT-ITM-000001",
+          "decided_on_a_realization_of": [
+            "eli/dl/doc/TA-10-2099-0001"
+          ]
+        },
+        {
+          "id": "eli/dl/event/2099-0001-TRILOGUE-2099-04-01",
+          "had_activity_type": "def/ep-activities/INTERINSTITUTIONAL_NEGOTIATION",
+          "activity_date": "2099-04-01",
+          "type": "Activity",
+          "activity_id": "2099-0001-TRILOGUE-2099-04-01"
+        },
+        {
+          "id": "eli/dl/event/2099-0001-TRILOGUE-2099-05-01",
+          "had_activity_type": "def/ep-activities/INTERINSTITUTIONAL_NEGOTIATION",
+          "activity_date": "2099-05-01",
+          "type": "Activity",
+          "activity_id": "2099-0001-TRILOGUE-2099-05-01"
+        }
       ],
-      "created_a_realization_of": ["eli/dl/doc/A-10-2099-0001", "eli/dl/doc/TA-10-2099-0001"],
+      "created_a_realization_of": [
+        "eli/dl/doc/A-10-2099-0001",
+        "eli/dl/doc/TA-10-2099-0001"
+      ],
       "had_participation": [
-        { "participation_role": "def/ep-roles/COMMITTEE_LEAD", "had_participant_organization": ["org/TEST"] }
-      ]
+        {
+          "participation_role": "def/ep-roles/COMMITTEE_LEAD",
+          "had_participant_organization": [
+            "org/TEST"
+          ]
+        }
+      ],
+      "process_id": "2099-0001"
     }
   ]
 }

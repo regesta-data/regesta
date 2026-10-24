@@ -222,7 +222,7 @@ describe('run: simulated source outage changes nothing (K4)', () => {
     const clock = new ManualClock();
     const h = healthy();
     const first = await runIngestion({ dataDir: dir, select, clock, transports: { ep_api: h.ep, cellar: h.cellar } });
-    assert.deepEqual(first.sources.map((s) => [s.source, s.status]), [['ep_api', 'ok'], ['cellar', 'ok']]);
+    assert.deepEqual(first.sources.map((s) => [s.source, s.status]), [['ep_feed', 'ok'], ['ep_api', 'ok'], ['cellar', 'ok']]);
     assert.equal(first.licence.length, 3);
     let store = new Store(dir);
     const before = store.procedureDigest('2025/0102(COD)');
@@ -232,12 +232,12 @@ describe('run: simulated source outage changes nothing (K4)', () => {
 
     clock.advance(24 * 3600_000);
     const second = await runIngestion({ dataDir: dir, select, clock, transports: { ep_api: down, cellar: down }, licenceEvidence: false });
-    assert.deepEqual(second.sources.map((s) => [s.source, s.status]), [['ep_api', 'unavailable'], ['cellar', 'unavailable']]);
+    assert.deepEqual(second.sources.map((s) => [s.source, s.status]), [['ep_feed', 'unavailable'], ['ep_api', 'unavailable'], ['cellar', 'unavailable']]);
     assert.equal(second.procedures.changed, 0);
     store = new Store(dir);
     assert.equal(store.procedureDigest('2025/0102(COD)'), before, 'no change at the procedure');
     const health = store.db.prepare('SELECT source, status, last_success FROM source_health WHERE run = ? ORDER BY source').all(second.run) as { source: string; status: string; last_success: string }[];
-    assert.deepEqual(health.map((r) => [r.source, r.status, r.last_success]), [['cellar', 'unavailable', first.finished], ['ep_api', 'unavailable', first.finished]]);
+    assert.deepEqual(health.map((r) => [r.source, r.status, r.last_success]), [['cellar', 'unavailable', first.finished], ['ep_api', 'unavailable', first.finished], ['ep_feed', 'unavailable', first.finished]]);
     store.close();
     assert.equal(second.retryAfterViolations, 0);
   });
@@ -257,5 +257,49 @@ describe('run: simulated source outage changes nothing (K4)', () => {
     assert.equal(b.procedures.changed, 0);
     assert.equal(a.checksum, b.checksum);
     store.close();
+  });
+});
+
+describe('run: resume an aborted run where it stopped', () => {
+  it('skips what is done, fetches only the rest, and keeps the throttle across the restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'regesta-resume-'));
+    const base = JSON.parse(fixture('ep/procedure-synthetic.json').toString('utf8'));
+    const body = (pid: string) => {
+      const d = structuredClone(base);
+      d.data[0].label = `${pid.replace('-', '/')}(COD)`;
+      return Buffer.from(JSON.stringify(d));
+    };
+    let failSecond = true;
+    const calls: string[] = [];
+    const ep: Transport = async (req) => {
+      calls.push(req.url);
+      const m = /procedures\/(\d{4}-\d{4})\?/.exec(req.url);
+      if (!m) return ok('{"data":[]}');
+      if (m[1] === '2099-0002' && failSecond) return status(503);
+      return ok(body(m[1]));
+    };
+    const cellar: Transport = async () => ok('{"results":{"bindings":[]}}');
+    const select = { mode: 'explicit' as const, procedures: ['2099/0001(COD)', '2099/0002(COD)'] };
+    const clock = new ManualClock();
+    const first = await runIngestion({ dataDir: dir, select, clock, transports: { ep_api: ep, cellar }, licenceEvidence: false });
+    assert.equal(first.sources.find((s) => s.source === 'ep_api')!.objectsFailed, 1);
+    // Simulate an abort: the run was never finished.
+    let store = new Store(dir);
+    store.db.prepare('UPDATE runs SET finished = NULL, status = ? WHERE id = ?').run('running', first.run);
+    const before = store.fetchLog(first.run).length;
+    store.close();
+    failSecond = false;
+    calls.length = 0;
+    const second = await runIngestion({ dataDir: dir, select, clock, transports: { ep_api: ep, cellar }, licenceEvidence: false, resume: first.run });
+    assert.equal(second.run, first.run);
+    assert.ok(second.resumed);
+    assert.deepEqual(calls.filter((u) => /procedures\/\d{4}-\d{4}\?/.test(u)).map((u) => /(\d{4}-\d{4})/.exec(u)![1]), ['2099-0002'], 'only the missing procedure');
+    store = new Store(dir);
+    const log = store.fetchLog(first.run);
+    assert.ok(log.length > before);
+    for (let i = 1; i < log.length; i++) if (log[i].source !== 'cellar' && log[i - 1].source !== 'cellar') assert.ok(log[i].started_ms - log[i - 1].started_ms >= 2_000);
+    assert.equal((store.db.prepare("SELECT COUNT(*) AS n FROM run_items WHERE run = ? AND source = 'ep_api' AND outcome = 'ok'").get(first.run) as { n: number }).n, 2);
+    store.close();
+    await assert.rejects(runIngestion({ dataDir: dir, select, clock, transports: { ep_api: ep, cellar }, resume: first.run }), /finished/);
   });
 });

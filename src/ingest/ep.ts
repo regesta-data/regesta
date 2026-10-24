@@ -18,6 +18,8 @@ export const LIST_LIMIT = 50;
 
 export const listUrl = (type: string, year: number, offset: number): string =>
   `${EP_BASE}/procedures?process-type=${type}&year=${year}&format=application%2Fld%2Bjson&offset=${offset}&limit=${LIST_LIMIT}`;
+export const feedUrl = (type: string, since: string): string =>
+  `${EP_BASE}/procedures/feed?process-type=${type}&timeframe=custom&start-date=${since}&format=application%2Fld%2Bjson`;
 export const procedureUrl = (processId: string): string => `${EP_BASE}/procedures/${processId}?format=application%2Fld%2Bjson`;
 
 export interface ListPage { ids: { processId: string; label: string; type: string }[]; total: number }
@@ -99,11 +101,12 @@ export function parseProcedure(body: Buffer, ref: SourceRef): EpParse {
     const eventUri = str(e.id) ?? '';
     const eventId = stripPrefix(eventUri.slice(Math.max(0, eventUri.indexOf('eli/dl/event/'))), 'eli/dl/event/');
     const activity = last(str(e.had_activity_type)) ?? '';
-    const date = day(e.activity_date) ?? day(e.activity_start_date) ?? day(e.date);
+    const date = day(e.activity_date);
     const kind = kinds[activity];
     if (!kind) unmapped.add(activity);
     const refs: string[] = [];
-    for (const key of ['based_on_a_realization_of', 'recorded_in_a_realization_of', 'had_document', 'consists_of_a_realization_of']) {
+    // Document links of an event as seen in the API on 2026-10-24 (2025/0102: based_on 13, decided_on 4, recorded_in 3 events).
+    for (const key of ['based_on_a_realization_of', 'decided_on_a_realization_of', 'recorded_in_a_realization_of']) {
       for (const x of arr(e[key])) {
         const dref = docId(x);
         if (dref) {
@@ -140,7 +143,7 @@ export function parseProcedure(body: Buffer, ref: SourceRef): EpParse {
       header: {
         type,
         slug: procSlug(n),
-        title: str(p.process_title) ?? str(p.title_dcterms) ?? undefined,
+        title: str(p.process_title) ?? undefined,
         ep_stage: last(str(p.current_stage)) ?? undefined,
         ep_committees: [...committees].sort(),
         latest_ep_event: latest ?? undefined,

@@ -11,7 +11,8 @@
 
 import { iso, type Clock } from './clock.ts';
 
-export type SourceId = 'ep_api' | 'cellar';
+// ep_feed is the procedures feed of the EP API: same host and same client as ep_api, own entry in the source health.
+export type SourceId = 'ep_api' | 'ep_feed' | 'cellar';
 
 export interface SourcePolicy {
   source: SourceId;
@@ -76,6 +77,7 @@ export interface FetchLogEntry {
   error?: string;
   retry_after_s?: number;
   retry_after_ms?: number;
+  response_excerpt?: string; // only for error responses (status >= 400): what the source said, for the source health
   started_ms: number;
   finished_ms: number;
   not_before_ms: number | null;
@@ -130,16 +132,31 @@ export class PoliteClient {
   readonly policy: SourcePolicy;
   private readonly clock: Clock;
   private readonly transport: Transport;
+  private readonly onEntry?: (e: FetchLogEntry) => void;
 
-  constructor(policy: SourcePolicy, clock: Clock, transport: Transport = fetchTransport) {
+  // onEntry receives every finished attempt at once, so that the fetch log survives an aborted run.
+  constructor(policy: SourcePolicy, clock: Clock, transport: Transport = fetchTransport, onEntry?: (e: FetchLogEntry) => void) {
     this.policy = policy;
     this.clock = clock;
     this.transport = transport;
+    this.onEntry = onEntry;
     this.interval = policy.minIntervalMs;
   }
 
   get currentIntervalMs(): number {
     return this.interval;
+  }
+
+  // Resume after an aborted run: restore the throttle state from the stored fetch log of that run,
+  // so that interval, window and a pending Retry-After also hold across the restart.
+  prime(entries: Pick<FetchLogEntry, 'started_ms' | 'finished_ms' | 'retry_after_ms' | 'status'>[]): void {
+    for (const e of entries) {
+      this.lastStart = Math.max(this.lastStart ?? 0, e.started_ms);
+      this.starts.push(e.started_ms);
+      if (e.retry_after_ms !== undefined && e.retry_after_ms !== null) this.notBefore = Math.max(this.notBefore ?? 0, e.finished_ms + e.retry_after_ms);
+      if (e.status === 429) this.interval = Math.max(this.interval, this.policy.minIntervalMs * 2);
+    }
+    this.starts.sort((x, y) => x - y);
   }
 
   private async waitForSlot(): Promise<number | null> {
@@ -159,7 +176,8 @@ export class PoliteClient {
     }
   }
 
-  async request(url: string, init: { method?: 'GET' | 'POST'; headers?: Record<string, string>; body?: string } = {}): Promise<FetchResult> {
+  async request(url: string, init: { method?: 'GET' | 'POST'; headers?: Record<string, string>; body?: string; as?: SourceId } = {}): Promise<FetchResult> {
+    const source = init.as ?? this.policy.source;
     const delays = this.policy.retryDelaysMs;
     let lastStatus: number | null = null;
     let lastError = '';
@@ -170,7 +188,7 @@ export class PoliteClient {
       this.lastStart = started;
       this.starts.push(started);
       const entry: FetchLogEntry = {
-        source: this.policy.source, url, attempt,
+        source, url, attempt,
         not_before: pending === null ? null : iso(pending), not_before_ms: pending,
         started: iso(started), started_ms: started, finished: '', finished_ms: 0, status: null,
       };
@@ -197,18 +215,22 @@ export class PoliteClient {
       if (res) {
         entry.status = res.status;
         lastStatus = res.status;
+        if (res.status >= 400) entry.response_excerpt = res.body.subarray(0, 1000).toString('utf8');
         const retryAfter = parseRetryAfter(res.headers['retry-after'], finished);
         if (retryAfter !== null) {
           entry.retry_after_s = Math.ceil(retryAfter / 1000);
           entry.retry_after_ms = retryAfter;
           this.notBefore = Math.max(this.notBefore ?? 0, finished + retryAfter);
         }
+      }
+      this.onEntry?.(entry);
+      if (res) {
         const text = res.body.subarray(0, 4096).toString('utf8');
-        if (res.status === 403) throw new SourceBlocked(this.policy.source, 403, 'HTTP 403 (no workaround, source stopped for this run)');
+        if (res.status === 403) throw new SourceBlocked(source, 403, 'HTTP 403 (no workaround, source stopped for this run)');
         if (res.status === 202 && res.body.length === 0)
-          throw new SourceBlocked(this.policy.source, 202, 'HTTP 202 without content (WAF challenge)');
+          throw new SourceBlocked(source, 202, 'HTTP 202 without content (WAF challenge)');
         if ((res.headers['content-type'] ?? '').includes('text/html') && CHALLENGE.test(text))
-          throw new SourceBlocked(this.policy.source, res.status, 'bot challenge page');
+          throw new SourceBlocked(source, res.status, 'bot challenge page');
         if (res.status === 429) {
           this.interval = Math.max(this.interval, this.policy.minIntervalMs * 2);
           lastError = 'HTTP 429';
@@ -223,18 +245,26 @@ export class PoliteClient {
       if (this.notBefore !== null) retryWait = Math.max(retryWait, this.notBefore - this.clock.now());
       await this.clock.sleep(retryWait);
     }
-    throw new FetchFailed(this.policy.source, url, lastStatus, `${this.policy.source}: ${url} failed after ${delays.length + 1} attempts (${lastError})`);
+    throw new FetchFailed(source, url, lastStatus, `${source}: ${url} failed after ${delays.length + 1} attempts (${lastError})`);
   }
 }
 
-// Evidence check for criterion K2: no request started before a Retry-After of an earlier response expired.
-export function retryAfterViolations(log: FetchLogEntry[]): FetchLogEntry[] {
-  const out: FetchLogEntry[] = [];
-  const bySource = new Map<SourceId, number>();
+// Evidence check for criterion K2: no request started before a Retry-After of an earlier response
+// from the same host expired (ep_api and ep_feed share a host).
+export function retryAfterViolations(log: Pick<FetchLogEntry, 'url' | 'started_ms' | 'finished_ms' | 'retry_after_ms'>[]): typeof log {
+  const out: typeof log = [];
+  const byHost = new Map<string, number>();
+  const host = (u: string) => {
+    try {
+      return new URL(u).host;
+    } catch {
+      return u;
+    }
+  };
   for (const e of [...log].sort((a, b) => a.started_ms - b.started_ms)) {
-    const until = bySource.get(e.source);
+    const until = byHost.get(host(e.url));
     if (until !== undefined && e.started_ms < until) out.push(e);
-    if (e.retry_after_ms !== undefined) bySource.set(e.source, Math.max(until ?? 0, e.finished_ms + e.retry_after_ms));
+    if (e.retry_after_ms !== undefined && e.retry_after_ms !== null) byHost.set(host(e.url), Math.max(until ?? 0, e.finished_ms + e.retry_after_ms));
   }
   return out;
 }

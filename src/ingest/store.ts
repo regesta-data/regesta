@@ -28,7 +28,12 @@ CREATE TABLE IF NOT EXISTS source_health (
 CREATE TABLE IF NOT EXISTS fetch_log (
   run TEXT NOT NULL, seq INTEGER NOT NULL, source TEXT NOT NULL, url TEXT NOT NULL, attempt INTEGER NOT NULL,
   not_before TEXT, started TEXT NOT NULL, finished TEXT NOT NULL, status INTEGER, retry_after_s INTEGER, error TEXT,
+  started_ms INTEGER NOT NULL, finished_ms INTEGER NOT NULL, retry_after_ms INTEGER, not_before_ms INTEGER, response_excerpt TEXT,
   PRIMARY KEY (run, seq)
+);
+CREATE TABLE IF NOT EXISTS run_items (
+  run TEXT NOT NULL, source TEXT NOT NULL, key TEXT NOT NULL, outcome TEXT NOT NULL, note TEXT,
+  PRIMARY KEY (run, source, key)
 );
 CREATE TABLE IF NOT EXISTS raw_objects (
   run TEXT NOT NULL, source TEXT NOT NULL, key TEXT NOT NULL, url TEXT NOT NULL, retrieved TEXT NOT NULL,
@@ -140,6 +145,9 @@ export class Store {
     this.db = new DatabaseSync(join(dataDir, 'graph.sqlite'));
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.db.exec(DDL);
+    // Columns added after the first local run (2026-10-24); existing databases get them here.
+    const cols = new Set((this.db.prepare('PRAGMA table_info(fetch_log)').all() as { name: string }[]).map((c) => c.name));
+    if (!cols.has('response_excerpt')) this.db.exec('ALTER TABLE fetch_log ADD COLUMN response_excerpt TEXT');
   }
   close(): void {
     this.db.close();
@@ -180,10 +188,36 @@ export class Store {
       .run(run, source, url, retrieved, wording, sha256(wording));
   }
 
-  saveFetchLog(run: string, entries: FetchLogEntry[]): void {
-    const start = (this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS n FROM fetch_log WHERE run = ?').get(run) as { n: number }).n;
-    const ins = this.db.prepare('INSERT INTO fetch_log (run, seq, source, url, attempt, not_before, started, finished, status, retry_after_s, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    entries.forEach((e, i) => ins.run(run, start + i + 1, e.source, e.url, e.attempt, e.not_before, e.started, e.finished, e.status, e.retry_after_s ?? null, e.error ?? null));
+  logFetch(run: string, e: FetchLogEntry): void {
+    const seq = (this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM fetch_log WHERE run = ?').get(run) as { n: number }).n;
+    this.db.prepare('INSERT INTO fetch_log (run, seq, source, url, attempt, not_before, started, finished, status, retry_after_s, error, started_ms, finished_ms, retry_after_ms, not_before_ms, response_excerpt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(run, seq, e.source, e.url, e.attempt, e.not_before, e.started, e.finished, e.status, e.retry_after_s ?? null, e.error ?? null, e.started_ms, e.finished_ms, e.retry_after_ms ?? null, e.not_before_ms, e.response_excerpt ?? null);
+  }
+
+  fetchLog(run: string): (FetchLogEntry & { seq: number })[] {
+    return (this.db.prepare('SELECT * FROM fetch_log WHERE run = ? ORDER BY seq').all(run) as Record<string, unknown>[]).map((r) => ({
+      seq: r.seq as number, source: r.source as SourceId, url: r.url as string, attempt: r.attempt as number,
+      not_before: (r.not_before as string | null) ?? null, not_before_ms: (r.not_before_ms as number | null) ?? null,
+      started: r.started as string, started_ms: r.started_ms as number, finished: r.finished as string, finished_ms: r.finished_ms as number,
+      status: (r.status as number | null) ?? null, retry_after_s: (r.retry_after_s as number | null) ?? undefined,
+      retry_after_ms: (r.retry_after_ms as number | null) ?? undefined, error: (r.error as string | null) ?? undefined,
+      response_excerpt: (r.response_excerpt as string | null) ?? undefined,
+    }));
+  }
+
+  markItem(run: string, source: SourceId, key: string, outcome: 'ok' | 'not_found' | 'failed', note?: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO run_items (run, source, key, outcome, note) VALUES (?, ?, ?, ?, ?)').run(run, source, key, outcome, note ?? null);
+  }
+  doneItems(run: string, source: SourceId): Set<string> {
+    return new Set((this.db.prepare("SELECT key FROM run_items WHERE run = ? AND source = ? AND outcome IN ('ok', 'not_found')").all(run, source) as { key: string }[]).map((r) => r.key));
+  }
+  itemCounts(run: string, source: SourceId, keyPrefix = ''): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const r of this.db.prepare('SELECT outcome, COUNT(*) AS n FROM run_items WHERE run = ? AND source = ? AND key LIKE ? GROUP BY outcome').all(run, source, `${keyPrefix}%`) as { outcome: string; n: number }[]) out[r.outcome] = r.n;
+    return out;
+  }
+  runRow(id: string): { id: string; started: string; finished: string | null; status: string; scope: string } | undefined {
+    return this.db.prepare('SELECT id, started, finished, status, scope FROM runs WHERE id = ?').get(id) as never;
   }
 
   saveSourceHealth(run: string, h: { source: SourceId; status: 'ok' | 'partial' | 'unavailable'; requests: number; errors: Record<string, number>; median_ms: number | null; p95_ms: number | null; objects: number; objects_failed: number; last_success: string | null; note?: string }): void {

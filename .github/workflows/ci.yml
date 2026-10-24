@@ -21,6 +21,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # full history for check-paths (laufdaten/ never in a commit)
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -33,6 +34,8 @@ jobs:
         run: npm run check:licenses
       - name: Build rules B2-1, B3-1, G1 on CC BY data
         run: npm run check:rules
+      - name: Raw archive never in Git (laufdaten/, decision 24.10.2026)
+        run: npm run check:paths
 
   scancode:
     name: foreign code scan (B1-2)

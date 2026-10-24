@@ -11,11 +11,12 @@
 //   node scripts/ingest.ts --data-dir <dir> --frame COD:1972-2026        (scope from the events; first run)
 //   node scripts/ingest.ts --data-dir <dir> --scope COD                  (daily run: in scope + lists of this and last year)
 //   add --simulate-outage ep_api[,cellar] to let a source fail (HTTP 503) for criterion K4
+//   add --resume <run> (with the same selection) to continue an aborted run where it stopped
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import type { HttpRequest, HttpResponse, SourceId, Transport } from '../src/ingest/http.ts';
+import type { HttpRequest, HttpResponse, Transport } from '../src/ingest/http.ts';
 import { fetchTransport } from '../src/ingest/http.ts';
 import { runIngestion, type RunOptions } from '../src/ingest/run.ts';
 
@@ -52,12 +53,16 @@ async function main(): Promise<void> {
   } else if (scope) select = { mode: 'scope', types: scope.split(',') };
   else throw new Error('one of --procedures, --frame, --scope is required');
 
-  const transports: Partial<Record<SourceId, Transport>> = {};
-  for (const s of (arg('simulate-outage') ?? '').split(',').filter(Boolean)) transports[s as SourceId] = outage();
+  const transports: Partial<Record<'ep_api' | 'cellar', Transport>> = {};
+  for (const s of (arg('simulate-outage') ?? '').split(',').filter(Boolean)) {
+    if (s !== 'ep_api' && s !== 'cellar') throw new Error(`--simulate-outage: unknown source ${s}`);
+    transports[s] = outage();
+  }
 
   const summary = await runIngestion({
     dataDir,
     select,
+    resume: arg('resume'),
     transports: { ep_api: transports.ep_api ?? fetchTransport, cellar: transports.cellar ?? fetchTransport },
     log: (line) => console.log(`${new Date().toISOString()} ${line}`),
   });
