@@ -17,3 +17,15 @@ path = ["*.md", "docs/**", ".github/PULL_REQUEST_TEMPLATE.md", "package.json", "
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Manuel Wechner (Berth)"
 SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = ["test/fixtures/cellar/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "European Union (source data: Publications Office, Cellar metadata)"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ["test/fixtures/ep/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Manuel Wechner (Berth) (synthetic test data)"
+SPDX-License-Identifier = "AGPL-3.0-only"

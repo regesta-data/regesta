@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "check:licenses": "node scripts/check-licenses.ts",
-    "check:rules": "node scripts/check-rules.ts",
+    "check:rules": "node scripts/check-rules.ts test/reference-cases test/fixtures",
     "check:scancode": "node scripts/scancode-gate.ts scancode-results.json",
     "ci": "npm run typecheck && npm run test && npm run check:licenses && npm run check:rules"
   },
