@@ -128,9 +128,10 @@ export async function runIngestion(opts: RunOptions): Promise<RunSummary> {
     const url = feedUrl(type, since);
     try {
       const res = await ep.request(url, { headers: epHeaders, as: 'ep_feed' });
-      if (res.status !== 200) throw new FetchFailed('ep_feed', url, res.status, `HTTP ${res.status}`);
+      // 204 No Content: nothing changed in the timeframe (seen 2026-10-24). Not to be confused with 202 without content (WAF).
+      if (res.status !== 200 && res.status !== 204) throw new FetchFailed('ep_feed', url, res.status, `HTTP ${res.status}`);
       store.saveRaw(run, 'ep_feed', key, url, iso(clock.now()), res.body);
-      const page = parseList(res.body);
+      const page = res.status === 204 ? { ids: [], total: 0 } : parseList(res.body);
       if (opts.select.mode === 'scope') for (const x of page.ids) targets.set(x.processId, x.type || type);
       store.markItem(run, 'ep_feed', key, 'ok', `${page.ids.length} procedures since ${since}`);
     } catch (err) {
@@ -164,11 +165,12 @@ export async function runIngestion(opts: RunOptions): Promise<RunSummary> {
               body = gunzipSync(readFileSync(join(opts.dataDir, row.path)));
             } else {
               const res = await ep.request(url, { headers: epHeaders });
-              if (res.status !== 200) throw new FetchFailed('ep_api', url, res.status, `list ${type} ${year}: HTTP ${res.status}`);
+              // 204 No Content: no procedure of this type in this year (e.g. COD 1973).
+              if (res.status !== 200 && res.status !== 204) throw new FetchFailed('ep_api', url, res.status, `list ${type} ${year}: HTTP ${res.status}`);
               body = res.body;
               store.saveRaw(run, 'ep_api', key, url, iso(clock.now()), body);
             }
-            const page = parseList(body);
+            const page = body.length === 0 ? { ids: [], total: 0 } : parseList(body);
             if (!done.has(key)) store.markItem(run, 'ep_api', key, 'ok', `${page.ids.length} of ${page.total}`);
             for (const x of page.ids) targets.set(x.processId, x.type || type);
             if (page.ids.length < LIST_LIMIT || offset + LIST_LIMIT >= page.total) break;

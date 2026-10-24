@@ -303,3 +303,18 @@ describe('run: resume an aborted run where it stopped', () => {
     await assert.rejects(runIngestion({ dataDir: dir, select, clock, transports: { ep_api: ep, cellar }, resume: first.run }), /finished/);
   });
 });
+
+describe('run: HTTP 204 from the EP API is an empty answer, not an outage', () => {
+  it('treats an empty year list and an empty feed as ok', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'regesta-204-'));
+    const base = JSON.parse(fixture('ep/procedure-synthetic.json').toString('utf8'));
+    const ep: Transport = async (req) => {
+      if (req.url.includes('/procedures/feed') || req.url.includes('year=2098')) return { status: 204, headers: {}, body: Buffer.alloc(0) };
+      if (req.url.includes('year=2099')) return ok(JSON.stringify({ data: [{ process_id: '2099-0001', label: '2099/0001(COD)', process_type: 'COD' }], meta: { total: 1 } }));
+      return ok(JSON.stringify(base));
+    };
+    const s = await runIngestion({ dataDir: dir, select: { mode: 'frame', types: ['COD'], years: [2098, 2099] }, clock: new ManualClock(), transports: { ep_api: ep, cellar: async () => ok('{"results":{"bindings":[]}}') }, licenceEvidence: false });
+    assert.deepEqual(s.sources.map((x) => [x.source, x.status]), [['ep_feed', 'ok'], ['ep_api', 'ok'], ['cellar', 'ok']]);
+    assert.equal(s.procedures.fetched, 1);
+  });
+});
